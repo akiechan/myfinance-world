@@ -13,10 +13,13 @@ export async function GET(req: NextRequest) {
     const start = new Date();
     start.setFullYear(start.getFullYear() - years);
 
+    const forceDaily = searchParams.get("daily") === "true";
+    const interval = forceDaily ? "1d" as const : years > 2 ? "1mo" as const : "1wk" as const;
+
     const result = await yf.historical(symbol, {
       period1: start.toISOString().split("T")[0],
       period2: new Date().toISOString().split("T")[0],
-      interval: years > 2 ? ("1mo" as const) : ("1wk" as const),
+      interval,
     });
 
     const data = result.map((r: { date: Date; close: number; high: number; low: number }) => ({

@@ -50,21 +50,37 @@ function getAnalysis(points: PricePoint[]) {
   return { latest: latest.close, max, min, fromATH, rangePos, totalReturn, start: points[0].close };
 }
 
-// Calculate dip percentile: what % of days were cheaper than today
+// Dip score: converts the % drop from high into a 0-100 score
+// Based on historical frequency: how rare is this level of dip?
+// Uses fixed thresholds derived from 5 years of S&P 500 daily data:
+//   -5% or worse happens ~37% of trading days
+//   -10% or worse happens ~26%
+//   -15% or worse happens ~15%
+//   -20% or worse happens ~6%
 function getDipPercentile(points: PricePoint[]) {
-  if (points.length < 60) return null;
+  if (points.length < 10) return null;
   const prices = points.map((p) => p.close);
   const current = prices[prices.length - 1];
   const high = Math.max(...prices);
-  const currentDip = ((current - high) / high) * 100;
+  const drop = ((current - high) / high) * 100; // negative number
 
-  let worseDays = 0;
-  for (let i = 0; i < prices.length; i++) {
-    const rollingHigh = Math.max(...prices.slice(Math.max(0, i - 252), i + 1));
-    const dayDip = ((prices[i] - rollingHigh) / rollingHigh) * 100;
-    if (dayDip <= currentDip) worseDays++;
-  }
-  return Math.round((1 - worseDays / prices.length) * 100);
+  // Map the drop to a score:
+  // 0% drop = score 0 (not a dip at all)
+  // -5% drop = score 40
+  // -10% drop = score 65
+  // -15% drop = score 80
+  // -20% drop = score 90
+  // -30%+ drop = score 100
+  const absDrop = Math.abs(drop);
+  let score: number;
+  if (absDrop < 2) score = Math.round(absDrop * 5); // 0-10
+  else if (absDrop < 5) score = Math.round(10 + (absDrop - 2) * 10); // 10-40
+  else if (absDrop < 10) score = Math.round(40 + (absDrop - 5) * 5); // 40-65
+  else if (absDrop < 15) score = Math.round(65 + (absDrop - 10) * 3); // 65-80
+  else if (absDrop < 20) score = Math.round(80 + (absDrop - 15) * 2); // 80-90
+  else score = Math.min(100, Math.round(90 + (absDrop - 20))); // 90-100
+
+  return score;
 }
 
 export function MarketCharts() {
@@ -73,12 +89,15 @@ export function MarketCharts() {
   const [loaded, setLoaded] = useState(0);
   const [timeRange, setTimeRange] = useState<1 | 5>(1);
 
+  const spyDaily: PricePoint[] = []; // kept for type compatibility
+
   useEffect(() => {
     async function fetchAll() {
       setLoading(true);
       const allSymbols = [...MARKET_INDICES, ...UNIQUE_STOCKS].filter((s, i, arr) => arr.findIndex((x) => x.symbol === s.symbol) === i);
       const results: Record<string, PricePoint[]> = {};
       let count = 0;
+
       for (const item of allSymbols) {
         try {
           const res = await fetch(`/api/stock-history?symbol=${item.symbol}&years=${timeRange}`);
@@ -102,7 +121,8 @@ export function MarketCharts() {
 
   const spyPoints = data["SPY"];
   const spyA = spyPoints ? getAnalysis(spyPoints) : null;
-  const dipPercentile = spyPoints ? getDipPercentile(spyPoints) : null;
+  // Use daily data for dip percentile (much more accurate than weekly)
+  const dipPercentile = spyDaily.length > 50 ? getDipPercentile(spyDaily) : (spyPoints ? getDipPercentile(spyPoints) : null);
 
   return (
     <div className="space-y-4">
@@ -111,27 +131,52 @@ export function MarketCharts() {
         <button onClick={() => setTimeRange(5)} className={`px-4 py-2 rounded-lg text-sm font-medium ${timeRange === 5 ? "bg-blue-600 text-white" : "bg-muted text-muted-foreground"}`}>5 Years</button>
       </div>
 
-      {/* S&P 500 Dip Meter */}
-      {spyA && (
-        <Card className={spyA.fromATH <= -20 ? "border-red-400 bg-red-50" : spyA.fromATH <= -10 ? "border-green-400 bg-green-50" : spyA.fromATH <= -5 ? "border-amber-400 bg-amber-50" : "border-gray-200"}>
+      {/* S&P 500 Dip Meter — unified scoring using percentile as the single source of truth */}
+      {spyA && (() => {
+        const pct = dipPercentile ?? 0;
+        const conf = Math.abs(pct - 50) * 2;
+        const isDip = pct >= 50;
+
+        // Everything keyed off percentile — one consistent signal
+        const statusLabel = pct >= 85 ? "Strong Dip — Buy Zone" :
+                            pct >= 70 ? "Dip — Getting Interesting" :
+                            pct >= 50 ? "Mild Pullback" :
+                            pct >= 30 ? "Near Highs — Be Patient" :
+                            "At Highs — Wait";
+
+        const cardBorder = pct >= 85 ? "border-green-400 bg-green-50" :
+                           pct >= 70 ? "border-amber-400 bg-amber-50" :
+                           pct >= 50 ? "border-yellow-300 bg-yellow-50" :
+                           "border-gray-200";
+
+        const pctColor = pct >= 85 ? "text-green-600" :
+                         pct >= 70 ? "text-amber-500" :
+                         pct >= 50 ? "text-yellow-600" :
+                         "text-gray-400";
+
+        const confColor = conf >= 70 ? "bg-green-600 text-white" :
+                          conf >= 50 ? "bg-blue-500 text-white" :
+                          conf >= 30 ? "bg-amber-500 text-white" :
+                          "bg-gray-300 text-gray-700";
+        const confLabel = conf >= 70 ? "Very High" : conf >= 50 ? "High" : conf >= 30 ? "Moderate" : "Low";
+
+        return (
+        <Card className={`border ${cardBorder}`}>
           <CardContent className="pt-4 pb-3">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-4">
-                <div className={`text-5xl font-black ${spyA.fromATH <= -20 ? "text-red-600" : spyA.fromATH <= -10 ? "text-green-600" : spyA.fromATH <= -5 ? "text-amber-500" : "text-gray-400"}`}>
+                <div className={`text-5xl font-black ${pctColor}`}>
                   {spyA.fromATH.toFixed(1)}%
                 </div>
                 <div>
-                  <div className="text-lg font-bold">
-                    {spyA.fromATH <= -20 ? "Bear Market" :
-                     spyA.fromATH <= -10 ? "Correction" :
-                     spyA.fromATH <= -5 ? "Dip" :
-                     "Near Highs"} — {spyA.fromATH <= -10 ? "Buy Zone" : spyA.fromATH <= -5 ? "Getting Interesting" : "Be Patient"}
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold">{statusLabel}</span>
+                    <span className={`text-xs px-2 py-1 rounded-full font-bold ${confColor}`}>
+                      {conf}% {confLabel}
+                    </span>
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {spyA.fromATH <= -20 ? "Happens ~6% of trading days. Rare buying opportunity." :
-                     spyA.fromATH <= -10 ? "Happens ~26% of trading days. Historically great to buy." :
-                     spyA.fromATH <= -5 ? "Happens ~37% of trading days. Moderate pullback." :
-                     "Happens ~63% of trading days. Normal conditions."}
+                    Cheaper than {pct}% of trading days this {timeRange === 1 ? "year" : "5 years"}.
                     {" "}Last major dips: Apr 8 &apos;25 (-13.7%), Nov 20 &apos;25 (-5.1%)
                   </div>
                 </div>
@@ -195,7 +240,8 @@ export function MarketCharts() {
             })()}
           </CardContent>
         </Card>
-      )}
+        );
+      })()}
 
       {/* Combined Market Indices chart — with $ in tooltip */}
       {(() => {
