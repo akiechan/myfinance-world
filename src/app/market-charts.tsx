@@ -330,7 +330,14 @@ export function MarketCharts() {
         }
         return (
           <Card>
-            <CardHeader className="pb-1"><CardTitle>Market Indices — {timeRange}Y Return</CardTitle></CardHeader>
+            <CardHeader className="pb-1">
+              <div className="flex items-center justify-between">
+                <CardTitle>Market Indices — {timeRange}Y Return</CardTitle>
+                <span className="text-xs text-muted-foreground">
+                  Through: {dates[dates.length - 1]}{liveQuote ? " + live" : ""}
+                </span>
+              </div>
+            </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={280}>
                 <AreaChart data={normalized}>
@@ -426,7 +433,15 @@ function StockGrid({ data, timeRange }: { data: Record<string, PricePoint[]>; ti
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle>All Stocks ({UNIQUE_STOCKS.filter((s) => data[s.symbol]?.length > 5).length})</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>All Stocks ({UNIQUE_STOCKS.filter((s) => data[s.symbol]?.length > 5).length})</CardTitle>
+            <span className="text-xs text-muted-foreground">
+              Data as of: {(() => {
+                const spyPts = data["SPY"];
+                return spyPts ? spyPts[spyPts.length - 1].date : "loading...";
+              })()}
+            </span>
+          </div>
           <p className="text-xs text-muted-foreground">Green = buy zone. Blue = fair. Amber = hold. Red = expensive. <strong>Double-click any stock to expand.</strong></p>
         </CardHeader>
         <CardContent>
