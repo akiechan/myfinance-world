@@ -83,13 +83,36 @@ function getDipPercentile(points: PricePoint[]) {
   return score;
 }
 
+interface LiveQuote {
+  price: number;
+  previousClose: number;
+  dayChange: number;
+  marketState: string;
+  high52w: number;
+  low52w: number;
+  timestamp: number;
+}
+
 export function MarketCharts() {
   const [data, setData] = useState<Record<string, PricePoint[]>>({});
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(0);
   const [timeRange, setTimeRange] = useState<1 | 5>(1);
+  const [liveQuote, setLiveQuote] = useState<LiveQuote | null>(null);
 
-  const spyDaily: PricePoint[] = []; // kept for type compatibility
+  // Fetch live SPY quote (real-time during market hours)
+  useEffect(() => {
+    function fetchLive() {
+      fetch("/api/live-quote?symbol=SPY")
+        .then((r) => r.json())
+        .then((q) => { if (q.price) setLiveQuote(q); })
+        .catch(() => {});
+    }
+    fetchLive();
+    // Refresh every 60 seconds during market hours
+    const interval = setInterval(fetchLive, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     async function fetchAll() {
@@ -121,8 +144,23 @@ export function MarketCharts() {
 
   const spyPoints = data["SPY"];
   const spyA = spyPoints ? getAnalysis(spyPoints) : null;
-  // Use daily data for dip percentile (much more accurate than weekly)
-  const dipPercentile = spyDaily.length > 50 ? getDipPercentile(spyDaily) : (spyPoints ? getDipPercentile(spyPoints) : null);
+
+  // If we have a live quote, use that price instead of the last historical close
+  // This gives real-time dip reading during market hours
+  const livePrice = liveQuote?.price;
+  const liveHigh = liveQuote?.high52w;
+  const liveFromHigh = livePrice && liveHigh ? ((livePrice - liveHigh) / liveHigh) * 100 : null;
+
+  // Use live data for dip score if available, otherwise fall back to historical
+  const effectiveFromHigh = liveFromHigh ?? spyA?.fromATH ?? 0;
+  const effectivePrice = livePrice ?? spyA?.latest ?? 0;
+  const effectiveHigh = liveHigh ?? spyA?.max ?? 0;
+
+  const dipPercentile = getDipPercentile(
+    livePrice && spyPoints
+      ? [...spyPoints, { date: new Date().toISOString().split("T")[0], close: livePrice, high: livePrice, low: livePrice }]
+      : spyPoints ?? []
+  );
 
   return (
     <div className="space-y-4">
@@ -131,13 +169,12 @@ export function MarketCharts() {
         <button onClick={() => setTimeRange(5)} className={`px-4 py-2 rounded-lg text-sm font-medium ${timeRange === 5 ? "bg-blue-600 text-white" : "bg-muted text-muted-foreground"}`}>5 Years</button>
       </div>
 
-      {/* S&P 500 Dip Meter — unified scoring using percentile as the single source of truth */}
-      {spyA && (() => {
-        const pct = dipPercentile ?? 0;
+      {/* S&P 500 Dip Meter */}
+      {(spyA || liveQuote) && (() => {
+        const dropPct = effectiveFromHigh;
+        const pct = dipPercentile ?? getDipPercentile([{ date: "", close: effectivePrice, high: effectivePrice, low: effectivePrice }]) ?? 0;
         const conf = Math.abs(pct - 50) * 2;
-        const isDip = pct >= 50;
 
-        // Everything keyed off percentile — one consistent signal
         const statusLabel = pct >= 85 ? "Strong Dip — Buy Zone" :
                             pct >= 70 ? "Dip — Getting Interesting" :
                             pct >= 50 ? "Mild Pullback" :
@@ -160,13 +197,16 @@ export function MarketCharts() {
                           "bg-gray-300 text-gray-700";
         const confLabel = conf >= 70 ? "Very High" : conf >= 50 ? "High" : conf >= 30 ? "Moderate" : "Low";
 
+        const marketState = liveQuote?.marketState;
+        const isLive = marketState === "REGULAR" || marketState === "PRE" || marketState === "POST";
+
         return (
         <Card className={`border ${cardBorder}`}>
           <CardContent className="pt-4 pb-3">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-4">
                 <div className={`text-5xl font-black ${pctColor}`}>
-                  {spyA.fromATH.toFixed(1)}%
+                  {dropPct.toFixed(1)}%
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
@@ -174,16 +214,26 @@ export function MarketCharts() {
                     <span className={`text-xs px-2 py-1 rounded-full font-bold ${confColor}`}>
                       {conf}% {confLabel}
                     </span>
+                    {isLive && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-500 text-white animate-pulse">LIVE</span>}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    Cheaper than {pct}% of trading days this {timeRange === 1 ? "year" : "5 years"}.
-                    {" "}Last major dips: Apr 8 &apos;25 (-13.7%), Nov 20 &apos;25 (-5.1%)
+                    {isLive ? "Real-time price. " : `Last close (${liveQuote ? "market closed" : "historical"}). `}
+                    Score: {pct}/100. Last major dips: Apr 8 &apos;25 (-13.7%), Nov 20 &apos;25 (-5.1%)
                   </div>
+                  {liveQuote && (
+                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                      Day change: <span className={liveQuote.dayChange >= 0 ? "text-green-600" : "text-red-600"}>
+                        {liveQuote.dayChange >= 0 ? "+" : ""}{liveQuote.dayChange}%
+                      </span>
+                      {" | "}52w: ${liveQuote.low52w?.toFixed(0)} — ${liveQuote.high52w?.toFixed(0)}
+                      {" | "}{marketState === "REGULAR" ? "Market Open" : marketState === "PRE" ? "Pre-Market" : marketState === "POST" ? "After Hours" : "Market Closed"}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="text-right">
-                <div className="text-3xl font-bold">${spyA.latest.toFixed(0)}</div>
-                <div className="text-xs text-muted-foreground">High: ${spyA.max.toFixed(0)}</div>
+                <div className="text-3xl font-bold">${effectivePrice.toFixed(0)}</div>
+                <div className="text-xs text-muted-foreground">High: ${effectiveHigh.toFixed(0)}</div>
               </div>
             </div>
             {dipPercentile !== null && (() => {
