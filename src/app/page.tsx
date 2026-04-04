@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { MarketCharts } from "./market-charts";
 import { DipDetector } from "./dip-detector";
 
@@ -7,6 +10,7 @@ export default function WorldFinancePage() {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "America/Los_Angeles",
   });
 
   return (
@@ -20,7 +24,7 @@ export default function WorldFinancePage() {
       <MarketCharts />
 
       <p className="text-xs text-gray-400 text-center pt-8">
-        Not financial advice. Data from Yahoo Finance.
+        Not financial advice. Data from Yahoo Finance. Refreshes on every visit.
       </p>
     </div>
   );
