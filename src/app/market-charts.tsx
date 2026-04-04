@@ -309,6 +309,25 @@ export function MarketCharts() {
           });
           return row;
         });
+
+        // Append today's live SPY price if available and newer than last data point
+        if (liveQuote?.price) {
+          const today = new Date().toISOString().split("T")[0];
+          const lastDate = dates[dates.length - 1];
+          if (today > lastDate) {
+            const row: Record<string, string | number> = { date: today + " (live)" };
+            MARKET_INDICES.forEach((s) => {
+              const pts = data[s.symbol];
+              if (pts?.[0]) {
+                // For SPY use live quote, for others use their last known close
+                const price = s.symbol === "SPY" ? liveQuote.price : pts[pts.length - 1].close;
+                row[s.symbol] = Math.round(((price - pts[0].close) / pts[0].close) * 10000) / 100;
+                row[s.symbol + "_price"] = Math.round(price * 100) / 100;
+              }
+            });
+            normalized.push(row);
+          }
+        }
         return (
           <Card>
             <CardHeader className="pb-1"><CardTitle>Market Indices — {timeRange}Y Return</CardTitle></CardHeader>
