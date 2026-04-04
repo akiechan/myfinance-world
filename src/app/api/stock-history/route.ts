@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
     start.setFullYear(start.getFullYear() - years);
 
     const forceDaily = searchParams.get("daily") === "true";
-    const interval = forceDaily ? "1d" as const : years > 2 ? "1mo" as const : "1wk" as const;
+    // 1 year = daily (250 pts), 2-5 years = weekly, 5+ = monthly
+    const interval = forceDaily ? "1d" as const : years <= 1 ? "1d" as const : years <= 5 ? "1wk" as const : "1mo" as const;
 
     const result = await yf.historical(symbol, {
       period1: start.toISOString().split("T")[0],
